@@ -70,7 +70,8 @@ describe("web", () => {
     for (const dir of [web, empty]) rmSync(dir, { recursive: true, force: true })
   })
 
-  const ctxIn = (design: () => "regular" | "compact") => ({ ...fakeCtx(true), settings: { design } }) as unknown as Ctx
+  const ctxIn = (design: () => "regular" | "compact") =>
+    ({ ...fakeCtx(true), settings: { design, loadDesign: async () => {} } }) as unknown as Ctx
   const app = (design: "regular" | "compact", webDir = web) =>
     createApp(
       ctxIn(() => design),

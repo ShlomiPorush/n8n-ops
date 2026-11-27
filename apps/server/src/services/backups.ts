@@ -15,6 +15,8 @@ import {
   workerJobs,
   workers,
 } from "../db/schema.ts"
+import { advisoryLocks } from "../lib/advisory-locks.ts"
+import { own } from "../lib/owned-work.ts"
 import { instanceSubject } from "./alert-routing.ts"
 import { setCondition } from "./alerts.ts"
 import { backupAlerts, backupCondition } from "./backup-alerts.ts"
@@ -97,10 +99,35 @@ export class NoDestinationError extends Error {
   }
 }
 
-async function createRun(ctx: Ctx, target: Instance | null, destinations: Destination[]) {
+type Started = { run: Run; instance: Instance | null; created: boolean }
+
+async function createRun(
+  ctx: Ctx,
+  target: Instance | null,
+  destinations: Destination[],
+  claim?: string,
+): Promise<Started | null> {
   return ctx.db.transaction(async (tx) => {
-    const [now] = target ? await tx.select().from(instances).where(eq(instances.id, target.id)).for("share") : []
+    const [now] = target ? await tx.select().from(instances).where(eq(instances.id, target.id)).for("update") : []
     if (target && !(now && can(now, "backup"))) return null
+    if (!target) await tx.execute(sql`select pg_advisory_xact_lock(${advisoryLocks.selfBackup}::bigint)`)
+    const live = await tx
+      .select()
+      .from(backupRuns)
+      .where(
+        and(now ? eq(backupRuns.instanceId, now.id) : isNull(backupRuns.instanceId), eq(backupRuns.status, "running")),
+      )
+    const current = live.find((r) => r.spooledAt || Date.now() - r.startedAt.getTime() < ARCHIVE_WAIT_MS)
+    if (current) return { run: current, instance: now ?? null, created: false }
+    if (!destinations.length) throw new NoDestinationError(now?.name ?? "The n8n-ops database")
+    if (claim) {
+      const [claimed] = await tx
+        .insert(alertState)
+        .values({ key: claim, active: false, detail: "started" })
+        .onConflictDoNothing()
+        .returning({ key: alertState.key })
+      if (!claimed) return null
+    }
     const [run] = await tx
       .insert(backupRuns)
       .values({
@@ -119,21 +146,16 @@ async function createRun(ctx: Ctx, target: Instance | null, destinations: Destin
         objectKey: keyFor(d, archiveParts(now ?? null, id, run.startedAt)),
       })
     }
-    return { run, instance: now }
+    return { run, instance: now ?? null, created: true }
   })
 }
 
 export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedule" | "manual"): Promise<Run | null> {
-  const [running] = await ctx.db
-    .select()
-    .from(backupRuns)
-    .where(and(eq(backupRuns.instanceId, instance.id), eq(backupRuns.status, "running")))
-  if (running && (running.spooledAt || Date.now() - running.startedAt.getTime() < ARCHIVE_WAIT_MS)) return running
   const destinations = await destinationsFor(ctx, instance)
-  if (!destinations.length) throw new NoDestinationError(instance.name)
-  const created = await createRun(ctx, instance, destinations)
-  if (!created?.instance) return null
-  const { run, instance: now } = created
+  const started = await createRun(ctx, instance, destinations)
+  if (!started?.instance) return null
+  if (!started.created) return started.run
+  const { run, instance: now } = started
   const viaWorker = now.backupVia === "worker"
   const worker = viaWorker ? await usableWorker(ctx, now) : null
   try {
@@ -152,7 +174,7 @@ export async function startBackup(ctx: Ctx, instance: Instance, trigger: "schedu
         now.id,
       )
     } else {
-      apiBackup(ctx, now, run.id, recipient).catch((error: Error) =>
+      own(apiBackup(ctx, now, run.id, recipient)).catch((error: Error) =>
         ctx.log.error("could not record the failed backup", { error: error.message }),
       )
     }
@@ -174,7 +196,7 @@ export async function archiveReady(ctx: Ctx, runId: string, archive: { size: num
     .set({ spooledAt: new Date(), sizeBytes: archive.size, sha256: archive.sha256 })
     .where(and(eq(backupRuns.id, runId), eq(backupRuns.status, "running"), isNull(backupRuns.spooledAt)))
     .returning({ id: backupRuns.id })
-  if (applied) void kickCopies(ctx)
+  if (applied && ctx.leading?.() !== false) void kickCopies(ctx)
   return Boolean(applied)
 }
 
@@ -342,38 +364,46 @@ async function maybeSelfBackup(ctx: Ctx, local: { date: string; time: string }) 
   const key = `selfbackup:${local.date}`
   const [done] = await ctx.db.select().from(alertState).where(eq(alertState.key, key))
   if (done) return
-  await ctx.db.insert(alertState).values({ key, active: false, detail: "started" }).onConflictDoNothing()
-  await runSelfBackup(ctx)
+  await startSelfBackup(ctx, key)
 }
 
 export async function runSelfBackup(ctx: Ctx) {
+  const run = await startSelfBackup(ctx)
+  if (!run) throw new Error("could not record the backup run")
+  return run
+}
+
+async function startSelfBackup(ctx: Ctx, claim?: string) {
   const destinations = await destinationsFor(ctx, null)
   if (!destinations.length) throw new NoDestinationError("The n8n-ops database")
-  const created = await createRun(ctx, null, destinations)
-  if (!created) throw new Error("could not record the backup run")
-  const { run } = created
-  void (async () => {
-    try {
-      const recipient = await backupRecipient(ctx)
-      const { url, password } = dumpConnection(process.env.DATABASE_URL ?? "")
-      if (!url) throw new Error("DATABASE_URL is not set")
-      const maxBuffer = await maxArchiveBytes(ctx)
-      let stdout: Buffer
+  const started = await createRun(ctx, null, destinations, claim)
+  if (!started) return null
+  const { run } = started
+  if (!started.created) return run
+  void own(
+    (async () => {
       try {
-        ;({ stdout } = await exec("pg_dump", ["--format=custom", "--no-owner", url], {
-          encoding: "buffer",
-          maxBuffer,
-          env: { ...process.env, PGPASSWORD: password },
-        }))
+        const recipient = await backupRecipient(ctx)
+        const { url, password } = dumpConnection(process.env.DATABASE_URL ?? "")
+        if (!url) throw new Error("DATABASE_URL is not set")
+        const maxBuffer = await maxArchiveBytes(ctx)
+        let stdout: Buffer
+        try {
+          ;({ stdout } = await exec("pg_dump", ["--format=custom", "--no-owner", url], {
+            encoding: "buffer",
+            maxBuffer,
+            env: { ...process.env, PGPASSWORD: password },
+          }))
+        } catch (error) {
+          throw new Error(dumpFailure(error))
+        }
+        const sealed = await sealBytes(new Uint8Array(stdout), recipient)
+        await spoolSealed(ctx, run.id, sealed.bytes)
       } catch (error) {
-        throw new Error(dumpFailure(error))
+        await failRun(ctx, run.id, (error as Error).message)
       }
-      const sealed = await sealBytes(new Uint8Array(stdout), recipient)
-      await spoolSealed(ctx, run.id, sealed.bytes)
-    } catch (error) {
-      await failRun(ctx, run.id, (error as Error).message)
-    }
-  })().catch((error: Error) => ctx.log.error("could not record the failed backup", { error: error.message }))
+    })(),
+  ).catch((error: Error) => ctx.log.error("could not record the failed backup", { error: error.message }))
   return run
 }
 

@@ -19,6 +19,7 @@ export type Ctx = {
   log: Logger
   events: EventEmitter
   agents?: AgentConnect
+  leading?: () => boolean
 }
 
 export type Topic = "problems" | "instances" | "backups" | "workflows" | "workers" | "overview" | "access"

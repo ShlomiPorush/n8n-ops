@@ -3,9 +3,18 @@ import { streamSSE } from "hono/streaming"
 import type { Ctx, Topic } from "../context.ts"
 import { requireUser } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
+import { own } from "../lib/owned-work.ts"
 import { checkSession } from "../services/session-policy.ts"
 
 export const SESSION_RECHECK_MS = 30_000
+
+const open = new Set<() => void>()
+let ended = false
+
+export function endStreams() {
+  ended = true
+  for (const finish of open) finish()
+}
 
 export function eventRoutes(ctx: Ctx, { recheckMs = SESSION_RECHECK_MS }: { recheckMs?: number } = {}) {
   const app = new Hono<Env>()
@@ -33,7 +42,7 @@ export function eventRoutes(ctx: Ctx, { recheckMs = SESSION_RECHECK_MS }: { rech
       const recheck =
         actor.kind === "user"
           ? setInterval(() => {
-              checkSession(ctx, actor.sessionId, { mode: "peek", actor: actorName(actor) })
+              own(checkSession(ctx, actor.sessionId, { mode: "peek", actor: actorName(actor) }))
                 .then((check) => {
                   if (!check.ok) finish()
                 })
@@ -41,8 +50,11 @@ export function eventRoutes(ctx: Ctx, { recheckMs = SESSION_RECHECK_MS }: { rech
             }, recheckMs)
           : undefined
       stream.onAbort(finish)
-      await stream.writeSSE({ event: "ready", data: "" })
+      open.add(finish)
+      if (ended) finish()
+      else await stream.writeSSE({ event: "ready", data: "" })
       await closed
+      open.delete(finish)
       ctx.events.off("change", onChange)
       clearInterval(ping)
       clearInterval(recheck)

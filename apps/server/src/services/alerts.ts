@@ -595,16 +595,27 @@ export async function handleTelegramCallback(ctx: Ctx, update: CallbackUpdate): 
 }
 
 let appliedWebhook = ""
+let appliedAt = 0
+let webhookSync: Promise<void> = Promise.resolve()
 
-export async function syncTelegramWebhook(ctx: Ctx) {
+export function syncTelegramWebhook(ctx: Ctx): Promise<void> {
+  const run = webhookSync.then(() => applyWebhook(ctx))
+  webhookSync = run.catch(() => {})
+  return run
+}
+
+async function applyWebhook(ctx: Ctx) {
   const tg = await telegramClient(ctx)
   const { publicUrl } = await ctx.settings.get("general")
   if (!tg || !publicUrl || !tg.secret) return
   const url = `${publicUrl.replace(/\/+$/, "")}/api/telegram/webhook`
   const key = `${url}|${tg.secret}|${tg.bot}`
-  if (key === appliedWebhook) return
+  const info = await tg.api.getWebhookInfo()
+  const failedSince = info !== true && (info.last_error_date ?? 0) * 1000 > appliedAt
+  if (key === appliedWebhook && info !== true && info.url === url && !failedSince) return
   await tg.api.setWebhook(url, tg.secret)
   appliedWebhook = key
+  appliedAt = Date.now()
   ctx.log.info("Telegram webhook set", { url })
 }
 

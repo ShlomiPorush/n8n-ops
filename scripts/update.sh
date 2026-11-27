@@ -7,10 +7,29 @@ cd "$(dirname "${BASH_SOURCE[0]}")"
 TIMEOUT="${ROLLOUT_TIMEOUT:-180}"
 SERVER_IMAGE="ghcr.io/shlomiporush/n8n-ops"
 WORKER_IMAGE="ghcr.io/shlomiporush/n8n-ops-worker"
+DOWNTIME="Use the update with downtime in docs/deploy.md: https://github.com/ShlomiPorush/n8n-ops/blob/main/docs/deploy.md"
 
 log() { printf '\033[36m%s\033[0m\n' "$*"; }
 warn() { printf '\033[33m%s\033[0m\n' "$*"; }
 err() { printf '\033[31m%s\033[0m\n' "$*" >&2; }
+
+is_release() { [[ $1 =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
+
+older() {
+  local -a a b
+  local i
+  IFS=. read -r -a a <<<"$1"
+  IFS=. read -r -a b <<<"$2"
+  for i in 0 1 2; do
+    if ((10#${a[i]} != 10#${b[i]})); then
+      ((10#${a[i]} < 10#${b[i]}))
+      return
+    fi
+  done
+  return 1
+}
+
+label() { docker "$1" inspect -f "{{index .Config.Labels \"$2\"}}" "$3"; }
 
 service_values() {
   local key="${*: -1}"
@@ -59,8 +78,8 @@ if [[ ! -f docker-compose.yml || ! -f .env ]]; then
   err "Run this beside the deployment's docker-compose.yml and .env."
   exit 1
 fi
-if ! docker rollout --help 2>/dev/null | grep -q "docker rollout"; then
-  err "The docker rollout plugin is not installed: https://github.com/wowu/docker-rollout"
+if ! docker rollout --help 2>/dev/null | grep -q -- "--wait-after-healthy"; then
+  err "The docker rollout plugin is not installed or is too old to know --wait-after-healthy: https://github.com/wowu/docker-rollout"
   exit 1
 fi
 if ! command -v flock >/dev/null; then
@@ -130,7 +149,7 @@ trap interrupted INT TERM
 version="${1:-}"
 new_env=()
 if [[ -n $version ]]; then
-  if [[ ! $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  if ! is_release "$version"; then
     err "A release looks like 0.10.0, not '$version'."
     exit 1
   fi
@@ -193,27 +212,98 @@ if [[ -n $version ]]; then
   fi
 fi
 
+is_server() { [[ " ${servers[*]} " == *" $1 "* ]]; }
+
+declare -A running_of=()
+check_containers() {
+  local service="$1" all running count state status health release
+  all="$(docker compose ps -a -q "$service")" || stop "Could not read the containers of $service from Docker."
+  running="$(docker compose ps -q "$service")" || stop "Could not read the containers of $service from Docker."
+  count="$(wc -w <<<"$all")"
+  if ! is_server "$service"; then
+    if [[ -n $running ]] && ((count != $(wc -w <<<"$running"))); then
+      stop "$service has stopped containers beside the running one, and docker rollout would replace only those. Remove them with: docker compose rm -f $service"
+    fi
+    return 0
+  fi
+  if ((count == 0)); then
+    stop "$service has no container. $DOWNTIME"
+  fi
+  if ((count > 1)); then
+    stop "$service has $count containers, not one. $DOWNTIME"
+  fi
+  state="$(docker container inspect -f '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$all")" ||
+    stop "Could not read the state of $service from Docker."
+  read -r status health <<<"$state"
+  if [[ $status != running ]]; then
+    stop "$service is stopped: its container is $status. $DOWNTIME"
+  fi
+  if [[ $health != healthy ]]; then
+    stop "$service is not healthy: its health is $health. $DOWNTIME"
+  fi
+  release="$(label container org.opencontainers.image.version "$all")" || stop "Could not read the labels of $service from Docker."
+  if ! is_release "$release"; then
+    stop "$service runs an unknown version: its image has no org.opencontainers.image.version label. $DOWNTIME"
+  fi
+  running_of[$service]="$release"
+}
+
+check_target() {
+  local service="$1" image="${image_of[$1]}" running="${running_of[$1]}" built from
+  built="$(label image org.opencontainers.image.version "$image")" || stop "Could not read the labels of $image from Docker."
+  if [[ $built != "$expected" ]]; then
+    stop "$image is version ${built:-unknown}, not $expected. $DOWNTIME"
+  fi
+  if [[ $running == "$expected" ]]; then
+    return 0
+  fi
+  if older "$expected" "$running"; then
+    stop "$service runs $running, which is newer than $expected. A release cannot go back after its migrations ran: to go back, restore the n8n-ops database backup into the earlier release."
+  fi
+  from="$(label image n8n-ops.rollout-from "$image")" || stop "Could not read the labels of $image from Docker."
+  if ! is_release "$from"; then
+    stop "$image has no n8n-ops.rollout-from label, so it may not run beside $running. $DOWNTIME"
+  fi
+  if older "$running" "$from"; then
+    stop "$service runs $running, and $expected may run only beside $from or later. $DOWNTIME"
+  fi
+}
+
+for service in "${services[@]}"; do
+  check_containers "$service"
+done
+
 log "Pulling: ${services[*]}"
 if ! "${new_env[@]}" docker compose pull "${services[@]}"; then
   stop "Pulling failed: nothing was changed."
 fi
 
 for service in "${services[@]}"; do
-  all="$(docker compose ps -aq "$service")" || stop "Could not read the containers of $service from Docker."
-  running="$(docker compose ps -q "$service")" || stop "Could not read the containers of $service from Docker."
-  if [[ -n $running ]] && (($(wc -w <<<"$all") != $(wc -w <<<"$running"))); then
-    stop "$service has stopped containers beside the running one, and docker rollout would replace only those. Remove them with: docker compose rm -f $service"
+  if is_server "$service"; then
+    check_target "$service"
+  fi
+done
+
+for service in "${services[@]}"; do
+  check_containers "$service"
+  if is_server "$service"; then
+    check_target "$service"
   fi
   if [[ -n $version && -z $edited ]]; then
     write_version "$version" || stop "Could not write VERSION=$version into .env."
     log "VERSION=$version in .env."
   fi
-  if [[ -z $running ]]; then
+  if is_server "$service" && [[ ${running_of[$service]} == "$expected" ]]; then
+    log "$service is already running $expected."
+    rolled+=("$service")
+    continue
+  fi
+  if ! is_server "$service" && [[ -z "$(docker compose ps -q "$service")" ]]; then
     log "$service is not running: starting it."
     started=(docker compose up -d --no-deps --wait --wait-timeout "$TIMEOUT" "$service")
   else
     log "Rolling $service"
-    started=(docker rollout --timeout "$TIMEOUT" "$service")
+    started=(docker rollout --timeout "$TIMEOUT" --wait-after-healthy 3 "$service")
   fi
   rolling="$service"
   ok=1

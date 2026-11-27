@@ -2,6 +2,7 @@ import { and, eq, gt, inArray, isNull, lt, or, sql } from "drizzle-orm"
 import { errors } from "oidc-provider"
 import type { Db } from "../db/client.ts"
 import { agentConsent, oauthStore } from "../db/schema.ts"
+import { advisoryLocks } from "../lib/advisory-locks.ts"
 import { sha256 } from "../lib/crypto.ts"
 import type { Tx } from "./gate.ts"
 
@@ -14,8 +15,11 @@ export const MAX_CLIENTS = 500
 export const MAX_DEVICE_REQUESTS = 200
 
 const CAPPED: Record<string, { lock: number; room: (tx: Tx) => Promise<boolean> }> = {
-  Client: { lock: 0x6e386f63, room: (tx) => roomForClient(tx, MAX_CLIENTS) },
-  DeviceCode: { lock: 0x6e386f64, room: async (tx) => (await openDeviceRequests(tx)) < MAX_DEVICE_REQUESTS },
+  Client: { lock: advisoryLocks.agentClients, room: (tx) => roomForClient(tx, MAX_CLIENTS) },
+  DeviceCode: {
+    lock: advisoryLocks.agentDeviceCodes,
+    room: async (tx) => (await openDeviceRequests(tx)) < MAX_DEVICE_REQUESTS,
+  },
 }
 
 export function storeAdapter(db: Db, { onReuse }: { onReuse?: (grantId: string) => Promise<unknown> } = {}) {

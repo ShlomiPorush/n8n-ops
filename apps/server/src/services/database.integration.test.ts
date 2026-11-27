@@ -10,6 +10,7 @@ import type { Ctx } from "../context.ts"
 import { createDatabase, type Database, type Db } from "../db/client.ts"
 import * as schema from "../db/schema.ts"
 import { auditLog, dbCompactions } from "../db/schema.ts"
+import { advisoryLocks } from "../lib/advisory-locks.ts"
 import { createAudit } from "../lib/audit.ts"
 import {
   compactStatus,
@@ -28,7 +29,7 @@ const name = `n8n_ops_database_${randomBytes(4).toString("hex")}`
 let url: string
 let database: Database
 let ctx: Ctx
-const LOCK = 7_243_003
+const LOCK = advisoryLocks.compaction
 
 const opened: Sql[] = []
 

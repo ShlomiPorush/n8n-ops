@@ -4,6 +4,7 @@ import { type Ctx, changed } from "../context.ts"
 import { instances, workflows } from "../db/schema.ts"
 import { sha256 } from "../lib/crypto.ts"
 import { oneAtATime } from "../lib/one-at-a-time.ts"
+import { own } from "../lib/owned-work.ts"
 import { makeStorable, storableText } from "../lib/storable.ts"
 import { N8nError, type N8nExecution, type N8nWorkflow } from "../n8n/client.ts"
 import { describeTrigger } from "../n8n/execution.ts"
@@ -220,7 +221,7 @@ function workflowRow(w: N8nWorkflow, s: { runs: number; errors: number; last: Da
 
 export function syncWorkflowsSoon(ctx: Ctx, instance: Instance) {
   if (!can(instance, "map") || unsupportedVersion(instance)) return
-  void syncWorkflows(ctx, instance).catch((e: Error) =>
+  void own(syncWorkflows(ctx, instance)).catch((e: Error) =>
     ctx.log.warn("workflow sync failed", { instance: instance.name, error: e.message }),
   )
 }

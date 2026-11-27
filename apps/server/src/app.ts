@@ -7,6 +7,7 @@ import { authRoute } from "./http/auth-guard.ts"
 import { tooLarge } from "./http/body-limit.ts"
 import type { Env } from "./http/types.ts"
 import { serveWeb } from "./http/web.ts"
+import { own } from "./lib/owned-work.ts"
 import { adminRoutes } from "./routes/admin.ts"
 import { overviewRoutes } from "./routes/overview.ts"
 import { sessionRoutes } from "./routes/session.ts"
@@ -15,13 +16,15 @@ import { setupRoutes } from "./routes/setup.ts"
 
 export type AppOptions = {
   webDir?: string
+  sharedAssetsDir?: string
   mounts?: { path: string; router: Hono<Env> }[]
 }
 
 export const AUTH_BODY_BYTES = 64 * 1024
 
-export function createApp(ctx: Ctx, { webDir, mounts = [] }: AppOptions = {}) {
+export function createApp(ctx: Ctx, { webDir, sharedAssetsDir, mounts = [] }: AppOptions = {}) {
   const app = new Hono<Env>()
+  app.use("*", (_c, next) => own(next()))
   app.use("*", agentGuard)
 
   app.get("/healthz/live", (c) => c.json<Health>({ status: "ok", version: ctx.version, checks: {} }))
@@ -54,7 +57,7 @@ export function createApp(ctx: Ctx, { webDir, mounts = [] }: AppOptions = {}) {
     return c.json({ error: "internal_error" }, 500)
   })
 
-  serveWeb(app, ctx, webDir)
+  serveWeb(app, ctx, webDir, sharedAssetsDir)
 
   return app
 }

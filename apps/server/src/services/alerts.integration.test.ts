@@ -71,6 +71,8 @@ function botApi() {
   let failNextSends = 0
   let editGate: Promise<void> | null = null
   let nextId = 100
+  let webhookUrl = ""
+  let lastErrorDate = 0
   const answer = (body: unknown) =>
     new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } })
   const fetchStub = async (url: string | URL, init?: RequestInit) => {
@@ -88,6 +90,9 @@ function botApi() {
     if (method === "editMessageText" && goneMessages.has(body.message_id as number))
       return answer({ ok: false, error_code: 400, description: "Bad Request: message to edit not found" })
     if (method === "sendMessage") return answer({ ok: true, result: { message_id: nextId++ } })
+    if (method === "setWebhook") webhookUrl = String(body.url)
+    if (method === "getWebhookInfo")
+      return answer({ ok: true, result: { url: webhookUrl, last_error_date: lastErrorDate } })
     if (method === "editMessageText") {
       const gate = editGate
       editGate = null
@@ -116,6 +121,12 @@ function botApi() {
     },
     sends: () => calls.filter((c) => c.method === "sendMessage"),
     edits: () => calls.filter((c) => c.method === "editMessageText"),
+    registerElsewhere: (url: string) => {
+      webhookUrl = url
+    },
+    failDelivery: () => {
+      lastErrorDate = Math.ceil(Date.now() / 1000) + 1
+    },
     fetchStub,
   }
 }
@@ -684,6 +695,25 @@ describe("Telegram forum topics", () => {
     await syncTelegramWebhook(t.ctx)
     await syncTelegramWebhook(t.ctx)
     expect(webhooks()).toBe(2)
+  })
+
+  it("sets the webhook again when another server's late registration left Telegram on another address", async () => {
+    const t = await setup()
+    await t.ctx.settings.set("general", {
+      ...(await t.ctx.settings.get("general")),
+      publicUrl: "https://ops.example.com",
+    })
+    const webhooks = () => bot.calls.filter((c) => c.method === "setWebhook")
+    await syncTelegramWebhook(t.ctx)
+    bot.registerElsewhere("https://old.example.com/api/telegram/webhook")
+    await syncTelegramWebhook(t.ctx)
+    expect(webhooks()).toHaveLength(2)
+    expect(webhooks()[1]?.body.url).toBe("https://ops.example.com/api/telegram/webhook")
+    await syncTelegramWebhook(t.ctx)
+    expect(webhooks()).toHaveLength(2)
+    bot.failDelivery()
+    await syncTelegramWebhook(t.ctx)
+    expect(webhooks()).toHaveLength(3)
   })
 
   it("a workflow split away is never listed in its old Problem's message again", async () => {

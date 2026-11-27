@@ -9,6 +9,7 @@ import type { Ctx } from "../context.ts"
 import { apiTokens } from "../db/schema.ts"
 import { requireToken } from "../http/middleware.ts"
 import { actorName, type Env } from "../http/types.ts"
+import { own } from "../lib/owned-work.ts"
 import { idleSince, issuerOf } from "../oauth/agents.ts"
 import {
   AccessError,
@@ -183,7 +184,7 @@ export function policy(ctx: Ctx, route: OpenRoute): MiddlewareHandler<Env> {
       await record("denied", 429)
       return c.json(busy, 429)
     }
-    const work = next().finally(() => s.give(who.id))
+    const work = own(next()).finally(() => s.give(who.id))
     const done = await within(work, LIMITS.deadlineMs)
     if (done.late) {
       work.catch(() => undefined)

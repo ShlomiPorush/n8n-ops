@@ -141,6 +141,7 @@ run_guards() {
     done < <(git ls-files -s "scripts/*.sh")
 
     bash scripts/test-release.sh || fail=1
+    bash scripts/test-update.sh || fail=1
     bash scripts/test-ci-result.sh || fail=1
     bash scripts/test-discover.sh || fail=1
     bash scripts/test-try-pr.sh || fail=1

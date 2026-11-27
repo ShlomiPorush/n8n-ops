@@ -9,6 +9,7 @@ import { createAuthSource } from "../auth/current.ts"
 import type { Ctx } from "../context.ts"
 import { createDatabase, type Database } from "../db/client.ts"
 import { auditLog, session, user } from "../db/schema.ts"
+import { advisoryLocks } from "../lib/advisory-locks.ts"
 import { createAudit } from "../lib/audit.ts"
 import { createSettings, defaults } from "../lib/settings.ts"
 import { eventRoutes } from "../routes/events.ts"
@@ -346,7 +347,6 @@ describe("the clocks", () => {
 })
 
 describe("longer clocks", () => {
-  const SIGN_OUTS_LOCK = 7_243_004
   const saveFrom = (cookie: string, values: Partial<typeof defaults.security>) =>
     call("PUT", "/api/settings/security", { json: { ...defaults.security, ...values }, cookie })
   const endedRows = async (target: string | null) =>
@@ -445,9 +445,9 @@ describe("longer clocks", () => {
     let pending: Promise<Response>[] = []
     try {
       await sql.begin(async (tx) => {
-        await tx`select pg_advisory_xact_lock(${SIGN_OUTS_LOCK})`
+        await tx`select pg_advisory_xact_lock(${advisoryLocks.signOuts})`
         pending = [saveFrom(a, { maxHours: 24 }), saveFrom(b, { maxHours: 48 })]
-        await waitFor(async () => (await waitingOn(SIGN_OUTS_LOCK)) >= 2)
+        await waitFor(async () => (await waitingOn(advisoryLocks.signOuts)) >= 2)
       })
       const answers = await Promise.all(pending)
       expect(answers.map((r) => r.status).sort()).toEqual([200, 401])

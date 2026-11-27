@@ -1,5 +1,6 @@
 import type { Ctx } from "../context.ts"
 import { instances } from "../db/schema.ts"
+import { own, stopping } from "../lib/owned-work.ts"
 import { dispatchAlerts, syncTelegramWebhook } from "./alerts.ts"
 import { checkDirect } from "./health.ts"
 import { pruneHealthHistory } from "./health-history.ts"
@@ -14,10 +15,10 @@ export type Job = { name: string; everyMs: number; run: (ctx: Ctx) => Promise<un
 export function createRunner(ctx: Ctx) {
   const running = new Set<string>()
   return async function runOnce(key: string, fn: () => Promise<unknown>) {
-    if (running.has(key)) return
+    if (running.has(key) || stopping()) return
     running.add(key)
     try {
-      await fn()
+      await own(fn())
     } catch (error) {
       ctx.log.warn(`${key} failed`, { error: (error as Error).message })
     } finally {
@@ -54,6 +55,7 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
   ]
 
   const tick = async () => {
+    if (stopping()) return
     for (const job of jobs) if (due(job.name, job.everyMs)) void runOnce(job.name, () => job.run(ctx))
     const all = await ctx.db.select().from(instances).where(activeOnly)
     for (const instance of all) {
@@ -78,7 +80,8 @@ export function startScheduler(ctx: Ctx, extraJobs: Job[] = []): () => void {
         !workflowSyncBusy(instance.id) &&
         Date.now() - lastWorkflowSync(instance.id) >= s.workflowMapMinutes * 60_000
       ) {
-        void syncWorkflows(ctx, instance).catch((e: Error) =>
+        if (stopping()) return
+        void own(syncWorkflows(ctx, instance)).catch((e: Error) =>
           ctx.log.warn("workflow sync failed", { instance: instance.name, error: e.message }),
         )
       }

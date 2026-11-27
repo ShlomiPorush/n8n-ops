@@ -2,11 +2,12 @@ import { DOCKER_CHECK_COVER_MS, type HeartbeatBody } from "@n8n-ops/shared"
 import { and, desc, eq, lt, type SQL, sql } from "drizzle-orm"
 import type { Ctx } from "../context.ts"
 import { instances, type OfflineJob, workerBeats, workerJobs, workerOffline, workers } from "../db/schema.ts"
+import { advisoryLocks } from "../lib/advisory-locks.ts"
+import { own, stopping } from "../lib/owned-work.ts"
 import { asDate, at } from "./health-history.ts"
 import type { DbLike } from "./problems.ts"
 import { offlineGap, RECORDING_GAP_MS } from "./worker-periods.ts"
 
-const RECORDING_LOCK = 7_243_002
 export const RECORDING_TICK_MS = 15_000
 export const START_MARK = "worker-history-start"
 export const PRUNED_MARK = "worker-history-pruned"
@@ -16,7 +17,7 @@ const BATCH = 5000
 export const FINISHED_JOB_KEEP_MS = DAY_MS
 
 export async function markAlive(tx: DbLike): Promise<Date> {
-  await tx.execute(sql`select pg_advisory_xact_lock(${RECORDING_LOCK}::bigint)`)
+  await tx.execute(sql`select pg_advisory_xact_lock(${advisoryLocks.recording}::bigint)`)
   const [row] = (await tx.execute(sql`
     with clock as materialized (select date_trunc('milliseconds', clock_timestamp()) as t),
     newest as (select id, alive_at from server_recording order by id desc limit 1),
@@ -48,10 +49,11 @@ export function startRecording(ctx: Ctx): () => void {
   let stopped = false
   let started = false
   const tick = async () => {
+    if (stopping()) return
     try {
-      await ctx.db.transaction((tx) => markAlive(tx))
+      await own(ctx.db.transaction((tx) => markAlive(tx)))
       if (!started) {
-        await markHistoryStart(ctx.db)
+        await own(markHistoryStart(ctx.db))
         started = true
       }
     } catch (error) {
